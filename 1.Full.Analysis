@@ -1,0 +1,1217 @@
+---
+title: "Correlation Plot"
+author: "Moaraj_Hasan"
+date: "24 April 2017"
+output: 
+  html_document: 
+    fig_height: 7
+    highlight: monochrome
+    keep_md: yes
+    number_sections: yes
+    toc: yes
+---
+#Clear the environement
+```{r}
+#Clear Environment
+rm(list = ls())
+```
+
+#Setup
+```{r Setup, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#If on the Alineware machine Set the Working Directory to this
+if(Sys.info()[['sysname']] == "Windows"){
+    #Convienienve View Function
+    View <- function(x){utils::View(x)}
+     setwd(dir = "D:/Dropbox/Aging BXD Study/D _ Metabolomics/F _ Correlation Plots/")}
+
+#If on the Mac Set the Working Directory to this
+if(Sys.info()[['sysname']] == "Darwin"){
+  View <- NULL
+     setwd(dir = "/Users/mohasan/Dropbox/Aging BXD Study/D _ Metabolomics/F _ Correlation Plots")}
+
+#Data import
+library(readr)
+
+#Data manipulation Packages
+library(dplyr)
+library(reshape2)
+library(plyr)
+library(tidyr)
+
+#Column Split 
+library(stringr)
+
+#For Plotting
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(ggthemes)
+library(GGally)
+
+#MAtrix Randomoization
+library(picante)
+
+# Linear and Logistical Regresssion
+library(MASS)
+
+# Convienience Function the Opposite of %in%
+'%!in%' <- function(x,y)!('%in%'(x,y))
+```
+
+#Multiplot Function
+```{r Multiple plot function}
+
+# ggplot objects can be passed in ..., or to plotlist (as a list of ggplot objects)
+# - cols:   Number of columns in layout
+# - layout: A matrix specifying the layout. If present, 'cols' is ignored.
+#
+# If the layout is something like matrix(c(1,2,3,3), nrow=2, byrow=TRUE),
+# then plot 1 will go in the upper left, 2 will go in the upper right, and
+# 3 will go all the way across the bottom.
+#
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots == 1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+```
+
+#Grid Arrange With Legend on the Bottom
+```{r grid_arrange_shared_legend}
+grid_arrange_shared_legend <- function(...) {
+    plots <- list(...)
+    g <- ggplotGrob(plots[[1]] + theme(legend.position = "bottom"))$grobs
+    legend <- g[[which(sapply(g, function(x) x$name) == "guide-box")]]
+    lheight <- sum(legend$height)
+    grid.arrange(
+        do.call(arrangeGrob, lapply(plots, function(x)
+            x + theme(legend.position = "none"))),
+        legend,
+        ncol = 1,
+        heights = unit.c(unit(1, "npc") - lheight, lheight))
+}
+```
+
+#Replicate Index function
+Add indexes for replicaites using the mod function on the sample index
+```{r Replicate Index,message=FALSE, warning=FALSE}
+Replicate_index <- function(metab_data){
+
+metab_data <- merge(metab_data %>% 
+
+mutate(Replicate  = paste("rep_", rep(c(1,2), times = dim(metab_data)[1]/2), sep = "")) %>% 
+
+select(Ion, Replicate), metab_data, by = "Ion")
+#you need to have unqiue values in the bz mere
+#can be done by selecting multiple columns
+
+return(metab_data)}
+```
+
+
+
+#Metabolite Data Import
+```{r}
+metab_data0 <- read.delim(file = "3.csv_evan1.csv", sep = ";")
+metab_data1 <- read.delim(file = "3.csv_moaraj1.csv", sep = ";")
+metab_data3 <- read.delim(file = "3.csv_moaraj3.csv", sep = ";")
+metab_data4 <- read.delim(file = "3.csv_moaraj4.csv", sep = ";")
+
+metab_data0 <- metab_data0[-nrow(metab_data0),]
+metab_data0 <- cbind.data.frame("Science",metab_data0)
+metab_data1 <- cbind.data.frame("Opt1",metab_data1)
+metab_data3 <- cbind.data.frame("Opt3",metab_data3)
+metab_data4 <- cbind.data.frame("FullRun1",metab_data4)
+
+names(metab_data0)[1] <- "Dataset"
+names(metab_data1)[1] <- "Dataset"
+names(metab_data3)[1] <- "Dataset"
+names(metab_data4)[1] <- "Dataset"
+
+names(metab_data0)[2] <- "Ion"
+names(metab_data1)[2] <- "Ion"
+names(metab_data3)[2] <- "Ion"
+names(metab_data4)[2] <- "Ion"
+
+metab_data0 <- Replicate_index(metab_data0)
+metab_data1 <- Replicate_index(metab_data1)
+metab_data3 <- Replicate_index(metab_data3)
+metab_data4 <- Replicate_index(metab_data4)
+#utils::View(metab_data0)
+```
+
+
+
+
+#Upset Analysis
+```{r}
+library(UpSetR)
+Metabolite_Venn_Data <- list(Science_Paper = names(metab_data0),
+                        #Optimization_1 = names(metab_data1),
+                        #Optimization_3 = names(metab_data3),
+                        Full_Run = names(metab_data4))
+
+Metabolite_Venn <- upset(fromList(Metabolite_Venn_Data), order.by = "freq",
+                         line.size = 2, point.size = 4)
+
+Metabolite_Venn
+```
+
+
+
+#Helper Function - get_lower_tri
+for Getting the Upper or Lower 
+Triangular of the Correlation Matrix
+```{r}
+# Get lower triangle of the correlation matrix
+  get_lower_tri <- function(cormat){
+    cormat[upper.tri(cormat)] <- NA
+    return(cormat)
+  }
+  # Get upper triangle of the correlation matrix
+  get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)] <- NA
+    return(cormat)
+  }
+```
+
+
+#Main Plotting Function for Correlation Matricies
+#Ordered by the coefficients
+```{r}
+plot_corr_matrix <- function(cormat){
+
+cormat <- reorder_cormat(cormat)
+# Melt the correlation matrix
+melted_cormat <- melt(cormat, na.rm = TRUE)
+names(melted_cormat) <- c("Var1","Var2","value")
+# Heatmap
+p <- ggplot(data = melted_cormat, 
+            aes(Var2, Var1, fill = value)) +
+     geom_tile(color = "white") +
+     scale_fill_gradient2(low = "turquoise4", 
+                      high = "red", 
+                      mid = "white",
+                      midpoint = 0 , limit = c(-1,1), 
+                      space = "Lab", 
+                      name = "Pearson\nCorrelation") +
+      theme_few() + 
+      theme(axis.text.x = element_text(angle = 90,vjust = 1,
+                                 size = 2,hjust = 1),
+      axis.text.y = element_text(hjust = -25, size = 2),
+      plot.title = element_text(vjust = -2,hjust =  0),
+      legend.justification = c(1, 0),
+      legend.position = c(0.4, 0.6),
+      legend.direction = "horizontal") +
+          
+      coord_fixed() +
+      guides(fill = guide_colorbar(barwidth = 7, barheight = 1,
+                    title.position = "top", title.hjust = 0.5)) +
+     labs(title = "Pearson Correlation Matrix\nComparing Metabolites from\nCurrent and Previous Science Paper") +  xlab(" ") + ylab(" ")
+p 
+}
+```
+
+
+
+#Strain Aggregates
+```{r, fig.height=7, fig.width=7}
+strain_corr <- function(metab_data_1 = filter(metab_data4, Replicate == "rep_1"),
+                        metab_data_2 = filter(metab_data4, Replicate == "rep_2")){
+
+
+print("Selecing the metabolites Common in both datasets")
+mdata_intercept <- intersect(names(metab_data_1),
+                             names(metab_data_2))
+
+metab_data_1 <- metab_data_1 %>%
+     select(one_of(mdata_intercept))
+
+metab_data_2 <- metab_data_2 %>%
+     select(one_of(mdata_intercept))
+
+print("Selecting the Mouse Strains common in both datasets")
+strain_intercept <- intersect(metab_data_1$Strain,
+                              metab_data_2$Strain)
+
+strain_data_1 <- metab_data_1 %>%
+     filter(Strain %in% strain_intercept)
+
+strain_data_2 <- metab_data_2 %>%
+     filter(Strain %in% strain_intercept)
+
+print("Selecting Factor Columns")
+factor_cols <- names(metab_data_1)[1:10]
+
+print("Aggregating Mice by Diet and Strain Means")
+strain_means_1 <- aggregate(strain_data_1,
+                            by = list(strain_data_1$Diet,
+                                      strain_data_1$Strain), 
+                            FUN = mean)
+
+strain_means_2 <- aggregate(strain_data_2,
+                            by = list(strain_data_2$Diet,
+                                      strain_data_2$Strain), 
+                            FUN = mean)
+
+print("Subsetting the data into a single cohort")
+
+strain_means_1 <- strain_means_1 %>% filter(Group.1 == "HF")
+strain_means_2 <- strain_means_2 %>% filter(Group.1 == "HF")
+
+print("Selecting the Mouse Strains common 
+in both datasets after aggregation")
+
+strain_intercept <- intersect(strain_means_1$Strain,
+                              strain_means_2$Strain)
+
+corr_data_1 <- strain_means_1 %>%
+     filter(Strain %in% strain_intercept)
+
+corr_data_2 <- strain_means_1 %>%
+     filter(Strain %in% strain_intercept)
+
+
+print("Removing Factor Columns for Correlation Function")
+corr_data_1 <- corr_data_1 %>% select(-one_of(factor_cols))
+corr_data_2 <- corr_data_2 %>% select(-one_of(factor_cols))
+
+
+print("Labelling two sets")
+names(corr_data_1) <- paste(names(corr_data_1),"_Set_1", sep = "")
+names(corr_data_2) <- paste(names(corr_data_2),"_Set_2", sep = "")
+
+
+print("Combing Data Sets")
+combined_data_cols <- cbind.data.frame(corr_data_1[-c(1:3)],
+                                       corr_data_2[-c(1:3)])
+
+print("Log Transforming Data")
+combined_data_cols <- log(combined_data_cols)
+
+print("Gernerating Correlation Matrix")
+cormat <- cor(combined_data_cols, 
+              use = "pairwise.complete.obs",
+              method = "spearman" )
+
+utils::View(cormat)
+return(cormat)
+}
+```
+
+#Helper function reorder_cormat
+This function reorders the correlation matrix
+according to the coefficients.
+```{r}
+reorder_cormat <- function(cormat){
+# Use correlation between variables as distance
+dd <- as.dist((1 - cormat)/2)
+hc <- hclust(dd)
+cormat <- cormat[hc$order, hc$order]
+}
+```
+
+#Main Correaltion Plot Plotting Funtion
+```{r}
+Plot_Correlation_HeatMap <- function(cor_matrix,
+                                     name, 
+                                     ordered = FALSE,
+                                     abs = FALSE,
+                                     upper_tri = FALSE){
+
+x <- cor_matrix
+
+if (abs == TRUE) {
+     x <- abs(x)
+     corr_scale = c(0,1)
+} else if (abs == FALSE) {
+     corr_scale = c(range(x))
+
+}
+
+
+if (ordered == TRUE) {
+     x <- reorder_cormat(na.omit(x))     
+}
+
+if (upper_tri == TRUE) {
+    x <- get_upper_tri(x)
+}
+
+
+pdf(file = as.character(name),width = 5,height = 5)
+# Melt the correlation matrix
+melted_cormat <- melt(x, na.rm = TRUE)
+# Create a ggheatmap
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value)) +
+ geom_tile(color = "white") +
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                      midpoint = 0, limit = corr_scale, space = "Lab", 
+                      name = "Pearson\nCorrelation") +
+
+ theme_minimal() + # minimal theme
+ theme(axis.text.x = element_text(angle = 90, vjust = 1,size = 2, hjust = 1),
+       axis.text.y = element_text(hjust = 1, size = 2)
+       ) +
+ coord_fixed()
+# Print the heatmap
+print(ggheatmap)
+dev.off()
+
+}
+```
+
+#Helper Function - Remove Matrix NA's
+for removing non finite values from a Matrix 
+```{r}
+remove_matrix_na <- function(x){
+"There are two methods for removing non finite values
+from the matricies"
+     
+"Remove all rows with non-finite values"
+#x[!rowSums(!is.finite(x))]
+
+"Or replace all non finite values with 0"
+x[!is.finite(x)] <- 0
+
+return(x)
+} 
+     
+```
+
+
+
+#Succint Plotting Function
+```{r}
+Make_Corr_Plot_PDF <- function(metab_data_1, 
+                               metab_data_2,
+                               pdf.file.name,
+                               ordered = FALSE,
+                               abs = TRUE,
+                               upper_tri = FALSE,
+                               full_corr = FALSE) {
+     
+#Correlation Matrix X
+x <- strain_corr(metab_data0, metab_data4)
+
+#remove the na values
+x <- remove_matrix_na(x)
+
+if (full_corr == FALSE) {
+#Get the uppder right quadrant
+x <- x[1:(nrow(x)/2),(ncol(x)/2 + 1 ):ncol(x)]
+}
+
+require(OpenMx)
+pdf(file = paste("7.hist.pdf",pdf.file.name))
+#foo <- apply(t(x),2,rev)
+foo <- x
+hist(diag2vec(foo))
+
+dev.off()
+
+name <- pdf.file.name
+"Plot the correlation matrix"
+Plot_Correlation_HeatMap(x,name,ordered,abs,upper_tri)
+}
+```
+
+Correlation Plot Between the Sceince Paper and Current Study
+```{r}
+Make_Corr_Plot_PDF(metab_data0, metab_data3,
+                   pdf.file.name = "5.Opt3_Science_Corr_Ordered_abs.pdf",
+                   ordered = TRUE, abs = TRUE, upper_tri = FALSE )
+
+Make_Corr_Plot_PDF(metab_data0, metab_data3,
+                   pdf.file.name = "5.Opt3_Science_Corr_abs.pdf",
+                   ordered = FALSE, abs = TRUE, upper_tri = FALSE )
+
+library(corrplot)
+corrplot(chisq$residuals, is.cor = FALSE)
+
+```
+
+
+Correlation Plot Between the 3rd Optimization and Current Study
+Plot of well seperated Metabolite over Diet
+```{r}
+
+x <- filter(metab_data4, Replicate == "rep_1") %>% select(HMDB02038)
+y <- filter(metab_data4, Replicate == "rep_2") %>% select(HMDB02038)
+
+x <- filter(metab_data4, Diet == "HF") %>% select(HMDB02038)
+y <- filter(metab_data4, Diet == "CD") %>% select(HMDB02038)
+
+plot(cbind.data.frame(y[1:700,],x[1:700,]))
+```
+
+
+#Helper Functions for plotting line of best Fit
+```{r}
+line_of_best_fit <- function(df){
+    m  <- lm(y ~ x, df);
+    eq <- list(a = format(coef(m)[1], digits = 2), 
+               b = format(coef(m)[2], digits = 2), 
+               r2 = format(summary(m)$r.squared, digits = 3))
+    return(eq)
+}
+
+
+lm_eqn <- function(df){
+    m <- lm(y ~ x, df);
+    eq <- substitute(italic(y) == a + b %.% italic(x)*","~~italic(r)^2~ "=" ~r2, 
+          list(a = format(coef(m)[1], digits = 2), 
+               b = format(coef(m)[2], digits = 2), 
+               r2 = format(summary(m)$r.squared, digits = 3)))
+    as.character(as.expression(eq));                 
+}
+```
+
+
+
+#Get the Plots for the replicates
+```{r }
+rep_corr_plots <- pairWiseCor(
+          (filter(metab_data4, Replicate == "rep_1") %>% select(-one_of(factor_cols, "Age.Cohort"))),
+          (filter(metab_data4, Replicate == "rep_2") %>% select(-one_of(factor_cols, "Age.Cohort")))
+                             )
+
+rep_corr_plots <- melt(rep_corr_plots)
+
+pdf("7.Rep_Corr_Plot.pdf", paper ="usr")
+ggplot(data = rep_corr_plots, aes(x = rep_corr_plots$value, fill = rep_corr_plots$variable)) + 
+geom_histogram(binwidth = .005) + facet_wrap(~variable, scales = 'free_x', ncol = 2) + 
+#theme_bw() + 
+scale_fill_brewer(palette="Set1") + 
+scale_y_continuous(name = "") +
+scale_x_continuous(name = "Correlation Coefficient", limits = c(0.4,1.0)) 
+dev.off()
+```
+
+#Overlapping Subsets Function
+```{r}
+Overlapping_Subsets <- function(metab_data_1, metab_data_2)  {
+  
+print("Selecing the metabolites Common in both datasets")
+mdata_intercept <- intersect(names(metab_data_1),
+                             names(metab_data_2))
+
+metab_data_1 <- metab_data_1 %>%
+     select(one_of(mdata_intercept))
+
+metab_data_2 <- metab_data_2 %>%
+     select(one_of(mdata_intercept))
+
+print("Aggregating Mice by Diet and Strain Means")
+strain_means_1 <- aggregate(metab_data_1,
+                            by = list(metab_data_1$Strain), 
+                            FUN = mean)
+
+strain_means_2 <- aggregate(metab_data_2,
+                            by = list(metab_data_2$Strain), 
+                            FUN = mean)
+
+
+print("Selecting the Mouse Strains common 
+in both datasets after aggregation")
+
+strain_intercept <- intersect(strain_means_1$Group.1,
+                              strain_means_2$Group.1)
+
+corr_data_1 <- strain_means_1 %>%
+     filter(Group.1 %in% strain_intercept)
+
+corr_data_2 <- strain_means_2 %>%
+     filter(Group.1 %in% strain_intercept)
+
+print("Determining Factor Columns")
+factor_cols <- names(metab_data_1[1:11])
+
+print("Removing Factor Columns for Correlation Function")
+corr_data_1 <- corr_data_1 %>% select(-one_of(factor_cols))
+corr_data_2 <- corr_data_2 %>% select(-one_of(factor_cols))
+
+return(  list(X1 = corr_data_1[-1],
+              X1.names = corr_data_1[1],
+              X2 = corr_data_2[-1],
+              X2.names = corr_data_2[1])  )
+}
+```
+
+#Pairwaise Correlation Graph 
+```{r}
+pairWiseCor <- function(metab_data_1,metab_data_2){
+
+    
+  pairs.1 <- names(metab_data_1)
+  pairs.2 <- names(metab_data_2)
+  pairs.df <- cbind(pairs.1, pairs.2)
+  
+  df <- data.frame (Variable1 = rep(0,nrow(pairs.df)),
+                    Variable2 = rep(0, nrow(pairs.df)),
+                    AbsSpearCor = rep(0, nrow(pairs.df)),
+                    SpearCor = rep(0, nrow(pairs.df)),
+                    AbsPearCor = rep(0, nrow(pairs.df)),
+                    PearCor = rep(0, nrow(pairs.df)),
+                    AbsKenCor = rep(0, nrow(pairs.df)),
+                    KenCor = rep(0, nrow(pairs.df))) 
+  
+  for(i in 1:nrow(pairs.df)){
+
+  print(paste("Computing Correlation Between",
+              pairs.1[i], "and" ,pairs.2[i]))
+    
+  print(paste(i,"Iterations of Total", nrow(pairs.df)))
+
+    df[i,1] <- pairs.1[i]
+    df[i,2] <- pairs.2[i]
+    
+    df[i,3] <- abs(cor(method = "spearman",cbind.data.frame(metab_data_1[,i],metab_data_2[,i])))[1,2]
+    df[i,4] <- cor(method = "spearman",cbind.data.frame(metab_data_1[,i],metab_data_2[,i]))[1,2]
+
+    df[i,5] <- abs(cor(method = "pearson",cbind.data.frame(metab_data_1[,i],metab_data_2[,i]))[1,2])
+    df[i,6] <- cor(method = "pearson",cbind.data.frame(metab_data_1[,i],metab_data_2[,i]))[1,2]
+    
+    df[i,7] <- abs(cor(method = "kendall", cbind.data.frame(metab_data_1[,i],metab_data_2[,i]))[1,2])
+    df[i,8] <- cor(method = "kendall",cbind.data.frame(metab_data_1[,i],metab_data_2[,i]))[1,2]
+  
+  }
+  return(df)
+}
+```
+
+#Overlap between the SCeince and hte Full Run metabolites
+```{r}
+overlap_metabs <- Overlapping_Subsets(metab_data0,metab_data4)
+Science_FullRun <- pairWiseCor(overlap_metabs$X1,overlap_metabs$X2)
+
+Science_FullRun_plot <- melt(Science_FullRun)
+ggplot(data = Science_FullRun_plot, aes(x = Science_FullRun_plot$value, fill = Science_FullRun_plot$variable)) + 
+geom_histogram(binwidth = .05) + facet_wrap(~variable, scales = 'free_x', ncol = 2) + 
+scale_fill_brewer(palette="Set1") + 
+scale_y_continuous(name = "") +
+scale_x_continuous(name = "Correlation Coefficient") 
+```
+
+#Boot Strapping Function
+```{r}
+correlation_bootstrap <- function(data_1,data_2,randomize,nboot,boot.subsample) {
+
+if(nboot > 1){
+  res.df <- data.frame(Variable1 = 0,
+                   Variable2 = 0,
+                   variable  = 0,
+                   value     = 0,
+                   nboot     = 0,
+                   random    = 0)
+
+  res.df <- res.df[-1,]
+
+  for (i in 1:nboot) {
+    
+    if(randomize == 1) {
+  
+    print("Performing Covaraince Determination on the Randomized Rows in Frist Data Set")
+    
+    data_1_matrix <- data.matrix(data_1)
+    data_1_matrix <- remove_matrix_na(data_1_matrix)
+    data_1_rand <- randomizeMatrix(data_1_matrix,null.model = "frequency",iterations = 1000)
+    data_1_rand <- data.frame(data_1_rand)
+    
+    data_2_matrix <- data.matrix(data_2)
+    data_2_matrix <- remove_matrix_na(data_2_matrix)
+    data_2_rand <- randomizeMatrix(data_2_matrix,null.model = "frequency",iterations = 1000)
+    data_2_rand <- data.frame(data_2_rand)
+    
+    } else if (randomize != 1) {data_1_rand <- data_1; data_2_rand <- data_2}
+    
+  parwise_correlations <- pairWiseCor(data_1_rand,data_2_rand)
+  parwise_correlations_melt <- melt(parwise_correlations)
+  iteration_vector <- c(rep(i, nrow(parwise_correlations_melt)))
+  
+  iteration_vector <- cbind(parwise_correlations_melt, iteration_vector)
+  
+  #Addeding Scrambled or Normal Data Column
+  if(randomize == 1) {
+  
+  random_vector <- (rep("Scrambled Data", nrow(parwise_correlations_melt)))
+  iteration_vector <- cbind(iteration_vector, random_vector)
+  
+  } else if (randomize != 1) {
+  
+  random_vector <- (rep("Normal Data", nrow(parwise_correlations_melt)))
+  iteration_vector <- cbind(iteration_vector, random_vector)
+  
+  }
+  
+  colnames(iteration_vector) <- names(res.df)
+  res.df <- rbind.data.frame(res.df, iteration_vector)
+  
+    }
+  
+return(res.df)
+
+} else if  (nboot == 1) {res.df <- pairWiseCor(data_1,data_2)
+                         res.df <- melt(res.df)
+res.df <- res.df[-1,]
+res.df <- na.omit(res.df)
+return(res.df)
+
+    }
+  }
+```
+
+#For Debugging
+```{r, eval=FALSE, include=FALSE}
+data_1 <- metab_data0
+data_2 <- metab_data4 
+
+metab_data_1 <- metab_data0
+metab_data_2 <- metab_data4 
+
+i = 1
+randomize = 1
+nboot = 10
+boot.subsample = 10
+```
+
+#Remove Debugging Variables from global Environment
+```{r}
+remove(data_1)
+remove(data_2)
+
+remove(metab_data_1)
+remove(metab_data_2)
+
+remove(i)
+remove(randomize)
+remove(nboot)
+remove(boot.subsample)
+```
+
+
+#Overlap Between the Science and the Full Run Metabolites with HF
+```{r}
+Corr_Bootstrap_Master_Function <- function(metab_data_1,metab_data_2,
+                                       randomize,nboot,boot.subsample) {
+
+overlap_metabs <- Overlapping_Subsets(metab_data_1,metab_data_2)
+
+data_1 <- overlap_metabs$X1
+data_2 <- overlap_metabs$X2
+
+res.df <- correlation_bootstrap(data_1,data_2, randomize, nboot, boot.subsample)
+
+res.df$random <- factor(res.df$random)
+res.df$variable <- factor(res.df$variable)
+
+return(res.df)
+}
+```
+
+
+```{r}
+y1.10 <- Corr_Bootstrap_Master_Function(metab_data0, 
+                                    metab_data4, 
+                                    randomize = 0, 
+                                    nboot = 10, 
+                                    boot.subsample = 100)
+
+y2.10 <- Corr_Bootstrap_Master_Function(metab_data0, 
+                                    metab_data4, 
+                                    randomize = 1, 
+                                    nboot = 10, 
+                                    boot.subsample = 100)
+
+HF <- function(x) {filter(x, Diet == "HF")}
+CD <- function(x) {filter(x, Diet == "CD")}
+
+y1.10.HF <- Corr_Bootstrap_Master_Function(HF(metab_data0), 
+                                       HF(metab_data4), 
+                                       randomize = 0, nboot = 10, boot.subsample = 100)
+
+y2.10.HF <- Corr_Bootstrap_Master_Function(HF(metab_data0), 
+                                       HF(metab_data4), 
+                                       randomize = 1, nboot = 10, boot.subsample = 100)
+
+y1.10.CD <- Corr_Bootstrap_Master_Function(CD(metab_data0), 
+                                       CD(metab_data4), 
+                                       randomize = 0, 
+                                       nboot = 10, boot.subsample = 100)
+
+y2.10.CD <- Corr_Bootstrap_Master_Function(CD(metab_data0), 
+                                       CD(metab_data4), 
+                                       randomize = 1, nboot = 10, boot.subsample = 100)
+
+```
+
+Perform 100 Boot Strap Iterations
+
+```{r}
+y1.100 <- Corr_Bootstrap_Master_Function(metab_data0, 
+                                         metab_data4, 
+                                         randomize = 0,
+                                         nboot =  100,
+                                         boot.subsample =  100)
+
+y2.100 <- Corr_Bootstrap_Master_Function(metab_data0,
+                                         metab_data4,
+                                         randomize = 1,
+                                         nboot = 100,
+                                         boot.subsample =  100)
+```
+
+
+#Parallelize the Code
+
+
+```{r}
+library(foreach)
+library(doParallel)
+library(parallel)
+
+numCores <- detectCores()
+cl <- makeCluster(numCores)
+registerDoParallel(cl)
+
+inputs <- 1:10
+processInput <- function(i) {
+  i * i
+}
+
+results <- foreach(i=inputs) %dopar% {
+  processInput(i)
+}
+```
+
+#Basic Parallelization Check
+```{r}
+bench.par <- microbenchmark::microbenchmark(
+results <- foreach(i=nboot) %dopar% {
+  i * 10
+} 
+,times = 1000)
+
+bench.sin <- microbenchmark::microbenchmark(
+results <- for(i in 1:nboot) {
+  i * 10
+}
+,times = 1000)
+
+bench.df <- cbind(bench.par,bench.sin[-1])
+colnames(bench.df) <- c("Objective","Parrallel","Serial")
+bench.df[1] <- 1:nrow(bench.df)
+m.bench.df <- melt(bench.df,id.vars = "Objective")
+m.bench.df$value <- m.bench.df$value/1E6
+
+ggplot(data = m.bench.df, aes(x = m.bench.df$variable,
+                              y = m.bench.df$value )) + 
+        geom_point(inherit.aes = FALSE, 
+                   aes(colour = m.bench.df$value,
+                       x = m.bench.df$variable,
+                       y = m.bench.df$value,
+                       alpha = 0.5),
+                   position = position_jitter(width = 0.5)) + 
+  scale_colour_gradient2() +
+        geom_boxplot(outlier.colour = NA, fill = NA, width = 0.5) + 
+  scale_y_continuous(name = "Processor Runtime (seconds)",limits = c(0,60)) + 
+  theme_light() 
+
+
+```
+
+
+
+```{r}
+
+
+pdf(file = "8.Correlation_Science_Full_run.CD.pdf", paper = "legal")
+p1 <- plotting_res3.df(rbind(y1.10,y2.10))
+p2 <- plotting_res2.df(rbind(y1.10,y2.10))
+
+dev.off()
+
+pdf(file = "8.Correlation_Science_Full_run.CD.pdf", paper = "legal")
+p3 <- plotting_res3.df(rbind(y1.10.CD,y2.10.CD))
+p4 <- plotting_res2.df(rbind(y1.10.CD,y2.10.CD))
+
+dev.off()
+
+pdf(file = "8.Correlation_Science_Full_run.HF.pdf", paper = "legal")
+p5 <- plotting_res3.df(rbind(y1.10.HF,y2.10.HF))
+p6 <- plotting_res2.df(rbind(y1.10.HF,y2.10.HF))
+
+dev.off()
+
+
+
+```
+
+
+#Plotting res.df
+```{r}
+
+plotting_res2.df <- function(x){
+# Histogram overlaid with kernel density curve
+p.2 <- ggplot(x, aes(x=value)) + 
+    geom_histogram(aes(y=..density..),      # Histogram with density instead of count on y-axis
+                   binwidth=.025,
+                   colour="black", fill="white") +
+    geom_density(alpha=.2, fill="#FF6666")  + # Overlay with transparent density plot
+    facet_wrap(~ random)
+return(p.2)
+}
+
+plotting_res3.df <- function(y){
+# Histogram overlaid with kernel density curve
+p.3 <- ggplot(y, aes(x=value)) + 
+    geom_histogram(aes(y=..density..),      # Histogram with density instead of count on y-axis
+                   binwidth=.025,
+                   colour="black", fill="white") +
+    geom_density(alpha=.2, fill="#FF6666") + # Overlay with transparent density plot
+    facet_wrap(~ variable + random,ncol = 2,scales = "free")
+
+return(p.3)
+}
+
+```
+
+
+#Importing Gene Data
+```{r}
+
+gene_data_t <- read.csv(file = "../F _ Correlation Plots Genes/Heart_data.csv", 
+                        sep = ";",header = TRUE)
+
+strain.names <- colnames(gene_data_t)
+strain.names[1] <- "Strain"
+colnames(gene_data_t) <- strain.names
+
+gene_data_t %>% mutate_if(is.factor, as.character) -> gene_data_t
+gene.names <- gene_data_t$Strain
+
+#Transpose just the number in the data frame
+gene_data <- as.data.frame(t(gene_data_t[2:ncol(gene_data_t)]))
+
+#Add strains to column 1
+gene_data <- cbind.data.frame(strain.names[-1],gene_data)
+
+#make the genenames the columns
+colnames(gene_data) <- c("Strain", gene.names)
+
+
+gene_data <- gene_data %>% separate(Strain, c("Strain", "Diet"),"_")
+
+
+
+gene_boot <- Succinct_Plotting_Function(filter(gene_data, Diet == "Chow"),
+                                        filter(gene_data, Diet == "HiFat"),
+                                        randomize = 0, nboot = 3, boot.subsample = 10000)
+
+gene_boot_scrambled <- Succinct_Plotting_Function(filter(gene_data, Diet == "Chow"),
+                                        filter(gene_data, Diet == "HiFat"),
+                                        randomize = 1, nboot = 3, boot.subsample = 10000)
+
+gene_plot <- plotting_res3.df(rbind(gene_boot,gene_boot_scrambled))
+
+
+```
+
+```{r}
+Emperical_FDR <- function(boot,scrambled_boot){
+  FDR.df <- cbind.data.frame(gene_boot[1],
+                             gene_boot$variable,
+                             gene_boot$value - gene_boot_scrambled$value)
+  colnames(FDR.df) <- c("Variable", "Correlation.Coefficient", "FDR")
+
+  return(FDR.df)  
+}
+
+FDR.df <- Emperical_FDR(gene_boot, gene_boot_scrambled)
+plotting_res4.df(FDR.df)
+
+```
+
+
+
+
+
+```{r}
+
+# Histogram overlaid with kernel density curve
+
+
+coeff.filt <- function(x,i){
+  coeffs <- as.character(unique(x$variable))
+  n <- coeffs[i]
+  x <- filter(x, variable == n)
+  return(x)
+  }
+
+
+FDR.data <- function(data1,data2,i){
+
+data1 <- coeff.filt(data1,i)
+data2 <- coeff.filt(data2,i)
+
+data1 <- data1$value
+data2 <- data2$value
+
+x = density(data1, from= range(c(data1, data2))[1], 
+                 to=range(c(data1, data2))[2])$x
+
+y1 = abs(        density(data1, from= range(c(data1, data2))[1], 
+                 to=range(c(data1, data2))[2] )$y - (density(data1, from= range(c(data1, data2))[1], 
+                 to=range(c(data1, data2))[2] )$y - density(data2,  
+                 from= range(c(data1, data2))[1], 
+                 to=range(c(data1, data2))[2])$y)         
+        )
+
+y2 = abs(        density(data2, 
+                         from= range(c(data1, data2))[1],
+                         to=range(c(data1, data2))[2])$y - 
+                   (density(data1, from= range(c(data1, data2))[1], 
+                            to=range(c(data1, data2))[2] )$y - 
+                      density(data2,from= range(c(data1, data2))[1],
+                              to=range(c(data1, data2))[2])$y)         
+        )
+
+y3 = abs((density(data1, from= range(c(data1, data2))[1], 
+                 to=range(c(data1, data2))[2] )$y - density(data2,  
+                 from= range(c(data1, data2))[1], 
+                 to=range(c(data1, data2))[2])$y))
+
+df <- cbind.data.frame(x,y1,y2,y3)
+
+}
+
+corr.df <- rbind.data.frame( FDR.data(gene_boot,gene_boot_scrambled,1),
+                        #FDR.data(gene_boot,gene_boot_scrambled,2),
+                        FDR.data(gene_boot,gene_boot_scrambled,3),
+                        #FDR.data(gene_boot,gene_boot_scrambled,4),
+                        FDR.data(gene_boot,gene_boot_scrambled,5)
+                        #FDR.data(gene_boot,gene_boot_scrambled,6)
+                      )
+
+corr.df$corr <-gsub(df$corr,pattern = 1,replacement = "Pearson Correlation")
+corr.df$corr <-gsub(df$corr,pattern = 3,replacement = "Spearman Correlation")
+corr.df$corr <-gsub(df$corr,pattern = 5,replacement = "Kendall Correlation")
+
+colnames(corr.df)
+ggplot(data = corr.df, aes(x = x, y = y3, colour = factor(corr))) + 
+geom_point() + geom_line() +
+scale_x_continuous(limits = c(0,1)) + theme_grey() + 
+xlab("Correlation Coefficient") +
+ylab("Difference in Null and Signal Densities") +
+ggtitle("Emperical False Discovery Rate of Genetic Data", subtitle = NULL) +
+theme(axis.title.y = element_text(size = 14),axis.title.x = element_text(size = 14)) +
+  
+geom_hline(aes(yintercept = 0.1), colour = "black", size = 1, linetype = "dashed")  + 
+geom_text(aes(0.1,.1,label = "10% Cut off", vjust = -0.3), color = "black", size = 6) + 
+  
+geom_hline(aes(yintercept = 0.5), colour = "black", size = 1, linetype = "dashed")  + 
+geom_text(aes(0.1,.5,label = "50% Cut off", vjust = -0.3), color = "black", size = 6) + 
+  
+theme(legend.position = c(0.75, 0.5),
+      legend.background = element_rect(fill="lightgrey",
+      size=0.5 , linetype="solid", colour ="black")) +
+scale_color_manual(name = "Correlation Coefficients",
+                   labels = c("Pearson Correlation", 
+                              "Spearman Correlation",
+                              "Kendall Correlation"), values = c("blue", "red","green")) 
+
+
+
+```
+
+
+
+#Multi AOV Script
+```{r}
+AOV_Script <- function(metab_data,metab){
+  
+  #Set up variables for the aov analysis
+  counts <- as.matrix(log(metab_data[metab]))
+  colnames(counts) <- "counts"
+  factor.columns <- metab_data[1:11]
+  metabmatrix <- cbind.data.frame(factor.columns,counts)
+  
+  fit <- aov(formula = as.formula("counts ~ Diet + Replicate + Sex + Age.Cohort + Strain"), 
+             data = metab_data)
+  
+  fit2 <- glm(formula = as.formula("counts ~ Diet + Replicate + Sex + Age.Cohort + Strain"), 
+              data = metab_data)
+  
+  return(fit)
+}
+
+
+fit_summ <- AOV_Script(metab_data4,13)
+
+```
+
+```{r}
+nfactor.cols = 11
+metab_data <- metab_data1
+inputs <- 12:20
+```
+
+```{r}
+remove(nfactor.cols)
+remove(metab_data)
+remove(inputs)
+```
+
+
+```{r}
+
+run.aov.par <- function(ncores,nfactor.cols,metab_data){
+
+require(foreach)
+require(doParallel)
+require(parallel)
+
+if(missing(ncores)){
+  print("Cores Not Specified, Using All Cores")
+numCores <- detectCores()
+cl <- makeCluster(numCores - 1)
+registerDoParallel(cl)
+} else {
+  cl <- makeCluster(ncores)
+  registerDoParallel(cl)
+}
+
+
+# The function I was to run in parrallel
+  # Needs to be ititlized in the new R environment
+  
+clusterExport(cl=cl, 
+              list("metab_data"),
+              envir=environment())
+
+AOV_Script <- function(metab_data,metab){
+  
+  #Set up variables for the aov analysis
+  counts <- as.matrix(log(metab_data[metab]))
+  colnames(counts) <- "counts"
+  factor.columns <- metab_data[1:11]
+  metabmatrix <- cbind.data.frame(factor.columns,counts)
+  
+  fit <- aov(formula = as.formula("counts ~ Diet + Replicate + Sex + Age.Cohort + Strain"), 
+             data = metab_data)
+  
+  fit2 <- glm(formula = as.formula("counts ~ Diet + Replicate + Sex + Age.Cohort + Strain"), 
+              data = metab_data)
+  
+  
+  return(fit)
+}
+  
+inputs <- (nfactor.cols + 1):ncol(metab_data)
+processInput <- function(i) {
+  AOV_Script(metab_data,i)
+}
+
+results <- foreach(i=inputs) %dopar% {
+  processInput(i)
+}
+
+return(results)
+
+stopCluster(cl)
+}
+
+mres.data1 <- run.aov.par(ncores = 7,nfactor.cols = 11,metab_data1)
+
+```
+
+```{r}
+
+drop.useless.factors <- function(DF){DF[, sapply(DF, function(col) length(unique(col))) > 1]}
+metab.4.filt <- drop.useless.factors(metab_data4)
+
+metab.4.full.factorized <- as.data.frame(lapply(metab_data4[1:11],as.factor))
+metab.4.full.factorized <- cbind.data.frame(metab.4.full.factorized,
+                                            metab_data4[12:ncol(metab_data4)])
+
+```
+
+```{r}
+#Diet based filtering
+metab.4.filt.diet <- cbind.data.frame(metab.4.filt[7],metab.4.filt[11:ncol(metab.4.filt)])
+metab.4.filt.diet.bin <- metab.4.filt.diet
+metab.4.filt.diet.bin[1] <- gsub(metab.4.filt.diet[1], pattern = "CD",replacement = 0)
+metab.4.filt.diet.bin[1] <- gsub(metab.4.filt.diet[1], pattern = "HF",replacement = 1)
+
+```
+
+```{r}
+
+library(Amelia)
+missmap(metab.4.filt.diet.bin, main = "Missing values vs observed")
+
+
+fit3 <- glm(formula = as.formula("Diet ~ ."), 
+            data = metab.4.filt.diet.bin,
+            family = binomial(link = "logit"))
+
+
+
+fit3
+
+#Extract the coefficients from the GLM models
+result_glm[12,1:2]
+
+ncol(final_metab_data)
+Tukey.fit <- TukeyHSD(fit, conf.level = 0.95)
+
+
+#Run AOV using HEPlot package
+metab.mod <- lm(as.matrix(final_metab_data[7]) ~ sex + diet, data=final_metab_data)
+Anova(metab.mod, test.statistic="Roy")
+
+#Get the Summary Table of the Fit
+fit_summary <- summary(fit)
+summary(fit2)
+
+#Plot Graphs for the metabolite fits
+plot(fit,which = 1:2)
+plot(fit2, which = 1:6)
+
+#Pair wise test to see if gender and sex cohorts make a significant difference
+#pairwise.t.test(as.matrix(final_metab_data[7]), g = sex ,p.adjust.method = "bonferroni")
+
+```
+
