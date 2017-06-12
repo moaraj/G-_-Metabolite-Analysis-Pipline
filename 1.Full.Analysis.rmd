@@ -1076,18 +1076,20 @@ Generate data from the Diet fold function and plot
 
 AgeFoldChange <- function(data,nfactorcols) {
 
-  #nfactorcols <- 10
-  #data <- metab_data0.names
- 
+  nfactorcols <- 11
+  data <- metab_data4.names
+
+    data$Age <- as.numeric(data$Age)
+	
     data.Young <- data %>% filter(Age < quantile(data$Age, c(0.5), na.rm = TRUE))
-data.Young.mean <- colMeans(data.Young[(nfactorcols + 1):ncol(data.Young)])
-data.Young.var <- as.numeric(lapply(data.Young[(nfactorcols + 1):ncol(data.Young)], sd))
-n.Young.samples <- nrow(data.Young) / 2
+	data.Young.mean <- colMeans(data.Young[(nfactorcols + 1):ncol(data.Young)])
+	data.Young.var <- as.numeric(lapply(data.Young[(nfactorcols + 1):ncol(data.Young)], sd))
+	n.Young.samples <- nrow(data.Young) / 2
 
     data.Old <- data %>% filter(Age > quantile(data$Age, c(0.5), na.rm = TRUE))
-data.Old.mean <- colMeans(data.Old[(nfactorcols + 1):ncol(data.Old)])
-data.Old.var <- as.numeric(lapply(data.Old[(nfactorcols + 1):ncol(data.Old)], sd))
-n.Old.samples <- nrow(data.HF)/2
+	data.Old.mean <- colMeans(data.Old[(nfactorcols + 1):ncol(data.Old)])
+	data.Old.var <- as.numeric(lapply(data.Old[(nfactorcols + 1):ncol(data.Old)], sd))
+    n.Old.samples <- nrow(data.Old) / 2
 
 
 Age.DF <- as.data.frame(t(rbind(data.Young.mean, data.Young.var,
@@ -1097,17 +1099,26 @@ colnames(Age.DF) <- c("Young.mean","Young.var","Old.mean","Old.var")
 
 Age.DF <- tibble::rownames_to_column(Age.DF,var = "Metabolite")
 
+
 Age.DF[is.na(Age.DF)] <- 0
 
-Age.DF <- Age.DF %>% mutate(AbsDiff = Young.mean - Old.mean) %>%
-                       mutate(FoldChange = Young.mean/Old.mean) %>% 
-                       mutate(Std.FoldChange = (Young.mean/Young.var) / (Old.mean/Old.var)) %>%
-                       mutate(FoldChange.Log2 = log2(Young.mean/ Old.mean)) %>%
-                       mutate(T.Stat = (Young.mean - Old.mean) / 
-                       sqrt(Young.var^2/n.Young.samples + Old.var^2/n.Old.samples)) %>%
-                       mutate(T.Test = pchisq(abs(T.Stat),1,lower.tail = FALSE)) %>%
+    Age.DF <- Age.DF %>% mutate(AbsDiff = Young.mean - Old.mean) %>%
+                       mutate(FoldChange = Young.mean / Old.mean) %>%
+                       mutate(FoldChange.Log2 = log2(Young.mean / Old.mean)) %>%
+                       mutate(T.Stat = (Young.mean - Old.mean) /
+                       sqrt(Young.var ^ 2 / n.Young.samples + Old.var ^ 2 / n.Old.samples)) %>%
+                       mutate(T.Test = pchisq(abs(T.Stat), 1, lower.tail = FALSE)) %>%
                        mutate(Bonferroni.P = T.Test * n.Young.samples) %>%
                        arrange(FoldChange.Log2)
+
+	Age.DF[!is.finite(Age.DF)] <- 0
+	Age.Min <- min(Age.DF$FoldChange)
+    Age.Max <- max(Age.DF$FoldChange)
+
+    Age.DF$Norm.FoldChange <- (Age.DF$FoldChange - Age.Min) / (Age.Max - Age.Min)
+
+
+
 return(Age.DF)
 
 }
@@ -1119,11 +1130,10 @@ return(Age.DF)
 
     Age.DF.0 <- AgeFoldChange(metab_data0.names, 9)
     Age.DF.1 <- AgeFoldChange(metab_data1.names, 9)
-    Age.DF.3 <- AgeFoldChange(metab_data3.names, 13)
+    Age.DF.3 <- AgeFoldChange(metab_data3.names, 11)
     Age.DF.4 <- AgeFoldChange(metab_data4.names, 11)
 
-
-    plot(Diet.DF.0$Young.mean, Diet.DF.0$Old.mean, log = "xy")
+	plot(Age.DF.0$Young.mean, Age.DF.0$Old.mean, log = "xy")
 
     model.Diet = lm(data = Age.DF.0, formula = Age.DF.0$Old.mean ~ Age.DF.0$Young.mean)
     summary(model.Diet)
@@ -1192,35 +1202,37 @@ plot(Diet.DF.0$FoldChange.Log2, -log(Diet.DF.0$T.Test), ylim = c(0,15), xlim = c
 ```
 
 
-#Perform the Same analysis on the Age Cohorts
-```{r}
-
-
-
-```
-
 #Write a function that generates a Volcaneo Plot from the Tabulated Data
 ```{r}
-
-volcano.plot <- function(data){
+volcano.plot <- function(data,critical.value){
   ggplot(data = data, 
-  aes(x = FoldChange.Log2, y = -log(T.Test), color = -log(T.Test) > 3)) + geom_point() + 
-  scale_y_continuous(limits = c(-1,25)) + scale_x_continuous(limits = c(-4,2.5)) +
-  geom_vline(xintercept = 0) + geom_hline(yintercept = 0) +
-  ggrepel::geom_label_repel( aes(label=ifelse(-log(T.Test) > 3,as.character(Metabolite),''),
+  aes(x = FoldChange.Log2, y = -log(T.Test), color = -log(T.Test) > critical.value)) + geom_point() +
+    scale_y_continuous() + scale_x_continuous() +
+    geom_vline(xintercept = 0) + geom_hline(yintercept = 0) +
+    ggrepel::geom_label_repel(aes(label = ifelse(-log(T.Test) > critical.value, as.character(Metabolite), ''),
   fontface = 'bold', color = 'white')) + theme_minimal(base_size = 16)
 }
 
 
-volcano.plot(Diet.DF.0)
-volcano.plot(Diet.DF.1)
-volcano.plot(Diet.DF.3)
-volcano.plot(Diet.DF.4)
+```
 
-
+#MAke Diet Volcano Plots
+```{r}
+volcano.plot(Diet.DF.0,3)
+volcano.plot(Diet.DF.1,3)
+volcano.plot(Diet.DF.3,3)
+volcano.plot(Diet.DF.4,3)
 ```
 
 
+# Make Age Volcano Plots
+```{r}
+volcano.plot(Age.DF.0,20)						
+volcano.plot(Age.DF.1,4)
+volcano.plot(Diet.DF.3,4)
+volcano.plot(Diet.DF.4,4)
+
+```
 
 
 
