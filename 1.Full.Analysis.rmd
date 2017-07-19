@@ -22,11 +22,8 @@ rm(list = ls())
 ```{r}
 #If on the Alineware machine Set the Working Directory to this
 if(Sys.info()[['sysname']] == "Windows"){
-    #Convienienve View Function
-    View <- function(x){utils::View(x)}
      setwd(dir = "D:/Dropbox/Aging BXD Study/D _ Metabolomics/G _ Metabolite-Analysis-Pipline/")
      }
-
 
 ```
 
@@ -46,6 +43,7 @@ library(dplyr)
 library(reshape2)
 library(plyr)
 library(tidyr)
+library(tidyverse)
 
 #Column Split 
 library(stringr)
@@ -84,7 +82,7 @@ search()
 # If the layout is something like matrix(c(1,2,3,3), nrow=2, byrow=TRUE),
 # then plot 1 will go in the upper left, 2 will go in the upper right, and
 # 3 will go all the way across the bottom.
-#
+
 multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
   library(grid)
 
@@ -161,101 +159,451 @@ return(metab_data)
 }
 ```
 
+```{r}
+#Remove Alternative HMDB Names
+    fix_HMDB_ids <- function(metab_data, factor_cols) {
+	    name.vec <- colnames(metab_data)[(factor_cols + 1):ncol(metab_data)]
+        name.vec <- as.character(lapply(name.vec, function(x) { substring(x, 1, 9) }) )
+        colnames(metab_data)[(factor_cols + 1):ncol(metab_data)] <- name.vec
+		return(metab_data)
+    }
+```
+
+```{r}
+#Average the Replicates Function
+
+#Use this for Full Run 1
+    Average_Replicates <- function(metabolite_data, factor_cols) {
+
+	#Remove Useless Variables 
+    useless.vars <- c("Conc", "Tissue.Weight", "Ion")
+
+	#Remove Duplicated Columns
+     metabolite_data <- metabolite_data[, !duplicated(colnames(metabolite_data))]
+	
+	#Take only the Major Extraction
+    metabolite_data <- metabolite_data %>% filter(Extraction %in% c("NH2", "NH24", "NH24A"))
+
+    #Make Variable Melt
+	metabolite_data.melt <- melt(metabolite_data,
+                            id = colnames(metabolite_data)[1:(factor_cols)] )
+
+	metabolite_data.agg <- metabolite_data.melt %>%
+                           group_by(Dataset, Extraction, ET, Strain, Diet, Sex, Age, Age.Cohort, variable) %>%
+                           summarise_all(funs(mean), rep_man = "value")
+
+	metabolite_data.agg <- metabolite_data.agg %>% select(-Replicate)
+						   
+    agg_cast <- dcast(metabolite_data.agg,
+				Dataset + Extraction + ET + Strain + Diet + Sex + Age + Age.Cohort ~ variable,
+				value.var = "value")
+
+	return(agg_cast)
+    }
+
+```
+
 
 #Metabolite Data Import
 ```{r}
-metab_data0 <- read.delim(file = "3.csv_evan1.csv", sep = ";")
-metab_data1 <- read.delim(file = "3.csv_moaraj1.csv", sep = ";")
-metab_data3 <- read.delim(file = "3.csv_moaraj3.csv", sep = ";")
-metab_data4 <- read.delim(file = "3.csv_moaraj4.names.csv", sep = ",")
+metab_data0 <- read.delim(file = "3.csv_evan1.csv", sep = ",")
+metab_data1 <- read.delim(file = "3.csv_moaraj1.csv", sep = ",")
+metab_data3 <- read.delim(file = "3.csv_moaraj3.csv", sep = ",")
+metab_data4 <- read.delim(file = "3.csv_moaraj4.csv", sep = ",")
+metab_data5 <- read.delim(file = "3.csv_moaraj5.csv", sep = ",")
 
-metab_data0 <- cbind.data.frame("Science",metab_data0)
-metab_data1 <- cbind.data.frame("Opt1",metab_data1)
-metab_data3 <- cbind.data.frame("Opt3",metab_data3)
-metab_data4 <- cbind.data.frame("FullRun1",metab_data4)
+Metabolite_datasets <- list(Science = metab_data0,
+							Opt_1 = metab_data1,
+							Opt_3 = metab_data3,
+							FullRun_1 = metab_data4,
+							FullRun_2 = metab_data5)
 
-names(metab_data0)[1] <- "Dataset"
-names(metab_data1)[1] <- "Dataset"
-names(metab_data3)[1] <- "Dataset"
-names(metab_data4)[1] <- "Dataset"
+rm(metab_data0, envir = as.environment(".GlobalEnv"))
+rm(metab_data1, envir = as.environment(".GlobalEnv"))
+rm(metab_data2, envir = as.environment(".GlobalEnv"))
+rm(metab_data3, envir = as.environment(".GlobalEnv"))
+rm(metab_data4, envir = as.environment(".GlobalEnv"))
 
-names(metab_data0)[2] <- "Ion"
-names(metab_data1)[2] <- "Ion"
-names(metab_data3)[2] <- "Ion"
-names(metab_data4)[2] <- "Ion"
+Metabolite_dataset_names <- names(Metabolite_datasets)
 
-metab_data0 <- Replicate_index(metab_data0)
-metab_data1 <- Replicate_index(metab_data1)
-metab_data3 <- Replicate_index(metab_data3)
-metab_data4 <- Replicate_index(metab_data4)
+Metabolite_datasets <- lapply(Metabolite_dataset_names, function(x){
+			
+	metab_df = Metabolite_datasets[[x]]
+	Dataset <- as.character(rep(x,nrow(metab_df)))
+	metab_df_fin <- cbind.data.frame(Dataset,metab_df)
+	names(metab_df_fin)[2] <- "Ion"
+	
+	metab_df_fin <- Replicate_index(metab_df_fin) #Label Replicates
+	metab_df_fin <- fix_HMDB_ids(metab_df_fin,11) # Replace HMDBids With Names
+	metab_df_fin <- Average_Replicates(metab_df_fin,11) #Average Replicates
+
+	metab_df_fin
+	})
+
+names(Metabolite_datasets) <- Metabolite_dataset_names
+```
+
+# Covnert HMDB to Other IDs
+```{r}
+HMDB_Dictionary <- read.csv(file="2.Metabolite.Name.Dict.csv")
+
+HMDB_to_Name <- function(metabolite_data, factor_cols) {
+
+    metab_names <- colnames(metabolite_data[(factor_cols + 1):ncol(metabolite_data)])
+
+res <-  as.character( unlist (
+	lapply(metab_names, function(name) {
+	name_index <- grep(pattern = name, x = HMDB_Dictionary[, 'HMDB'], fixed = T)
+	res <- HMDB_Dictionary[name_index, 'Name']
+    })))
+
+    new.colnames <- c(colnames(metabolite_data[1:(factor_cols)]),res)
+    colnames(metabolite_data) <- new.colnames
+
+    return(metabolite_data)
+
+}
+
+Metabolite_datasets_HMDB <- Metabolite_datasets #Save the Dataset with Molecule Name
+Metabolite_datasets_MetabName <- lapply(Metabolite_dataset_names, # Save the dataset with the HMDB id
+					   function(x){HMDB_to_Name(Metabolite_datasets[[x]],11)})
+
+
 ```
 
 
 
-#HMDB Lookup
+#Perform Data Normalization to the Total ion count
+```{r}
 
-```{r HMDB Loop UP function}
-HMDB_Lookup <- function(metabolite.data, nfactorcols){
-  
-  require(XML)
-  
-  metabolite.names <- colnames(metabolite.data)[(nfactorcols + 1):ncol(metabolite.data)]
-  metabolite.names.dup <- which(nchar(metabolite.names) != 9)
-  metabolite.names.fin <- metabolite.names[-metabolite.names.dup]
-  
-  res <- sapply( metabolite.names.fin, FUN = function(x) {
-      #Look up in local 
-      hmdb_dir <- file.path("..","Y_hmdb_database")
-      data_xml <- file.path(hmdb_dir, paste(x,".xml",sep = ""))
+metab_matrix_TIC_Norm <- function(metabolite_data,factor_cols ){
+	
+	metabolite_matrix <- as.data.frame(metabolite_data[(factor_cols + 1):ncol(metabolite_data)])
+		
+    #Normalize to TIC
+    metab_means <- rowMeans(metabolite_matrix)
+    metab_mean <- mean(metab_means)
 
-      if(file.exists(data_xml)){
-            xmlfile <- xmlNativeTreeParse(data_xml, 
-                                useInternalNodes = TRUE, 
-                                addAttributeNamespaces = TRUE)
-      
-            xmltop <- xmlRoot(xmlfile) #gives content of root
-            xmlValue(xmltop[["name"]])
-      }  
-  })
-  
-  
-  
-  nullToNA <- function(x) {
-    x[sapply(x, is.null)] <- "Missing.from.HMDB"
-    return(x)
+    norm_vec <- lapply(metab_means, function(x) {metab_mean/x})
+    norm_matrix <- diag(norm_vec)
+
+    metabolite_matrix_norm <- as.data.frame(norm_matrix %*% as.matrix(metabolite_matrix))
+
+	fin_metab_data <- cbind.data.frame(metabolite_data[1:factor_cols],metabolite_matrix_norm)
+	
+	fin_metab_data.melt <- melt(fin_metab_data, 
+								id= ( colnames(fin_metab_data)[1:factor_cols]) )
+
+	# This Function Returns the Normalized Dataframe and the Melted Normalized data frame in a list
+	# Use the [['metab.df']] or [['metab.df.melt']] to see which one to access
+
+	return( list( metab.df = as.data.frame(fin_metab_data),
+				  metab.df.melt = as.data.frame(fin_metab_data.melt)) )
+	}
+
+```
+
+```{r}
+#Plotting Functions for the Normalized data before and After
+{
+	#Sample Some Metabolites to Plot for factor wise data
+	metabolite_matrix_melt <- melt(metabolite_matrix[, c(seq(1, ncol(metabolite_matrix), 25))])
+    colnames(metabolite_matrix_melt) <- c("Dataset","Metabolite", "Intensity")
+
+    ggplot(data = metabolite_matrix_melt, aes(x = Intensity, colour = Metabolite, fill = Metabolite)) +
+    geom_histogram(aes(y = ..density..), colour = "black", fill = "white") + # Histogram with density instead of count on y-axis
+    geom_density(alpha = .2) + # Overlay with transparent density plot
+    facet_wrap(~Metabolite, ncol = 3)
+
+	ggplot(data = metabolite_matrix_melt, aes(x = log(Intensity, 2), colour = Metabolite, fill = Metabolite)) +
+    geom_histogram(aes(y = ..density..), colour = "black", fill = "white") + # Histogram with density instead of count on y-axis
+    geom_density(alpha = .2) + # Overlay with transparent density plot
+    facet_wrap(~Metabolite, ncol = 3)
+
+	#look at the Data Strain wise to see if ther eare some strain that are alwasys really low
+    metabolite_matrix_strain <- cbind.data.frame(metabolite_matrix$Strain,
+                                                 metabolite_matrix[(factor_cols + 1):ncol(metabolite_data)])
+    metabolite_matrix_strain_melt <- melt(metabolite_matrix_strain[, c(seq(1, ncol(metabolite_matrix), 33))])
+    colnames(metabolite_matrix_strain_melt) <- c("Strain", "Metabolite", "Intensity")
+
+    ggplot(data = metabolite_matrix_strain_melt, aes(x = log(Intensity,2), colour = Strain, fill = Strain)) +
+    geom_histogram(aes(y = ..density..), colour = "black", fill = "white") + # Histogram with density instead of count on y-axis
+    geom_density(alpha = .1) #+ # Overlay with transparent density plot
+    #facet_wrap(~Metabolite, ncol = 3)
+
+	#Sample Some Metabolites to Plot Nomralized Matrix
+    metabolite_matrix_norm_melt <- melt(metabolite_matrix_norm[, c(seq(1, ncol(metabolite_matrix_norm), 25))])
+	colnames(metabolite_matrix_norm_melt) <- c("Metabolite", "Intensity")
+	
+	
+	ggplot(data = metabolite_matrix_norm_melt, aes(x = log(Intensity, 2), colour = Metabolite, fill = Metabolite)) +
+    geom_histogram(aes(y = ..density..) , colour = "black", fill = "white") + # Histogram with density instead of count on y-axis
+    geom_density(alpha = .2) + # Overlay with transparent density plot
+    facet_wrap(~ Metabolite, ncol=3)
+}
+
+```
+
+# Remove Bad Metabolites
+```{r}
+remove.bad.metabs <- function(data) {
+
+# This function removed non-polar metabolites that are not 
+# Quatitatively extracted using the Polar extraction protocol
+# It Takes the metabolite data and assumes
+# only the metabolite columns start with PS. PE. etc.
+# and removes all of those columns
+
+data <- data %>% setNames(make.names(names(.), unique = TRUE)) %>% 
+	filter(Diet %in% c("HF","CD")) %>%
+	select(- dplyr::contains(":")) %>%
+	
+	select(-starts_with("DG")) %>%
+	
+	select(-starts_with("PE")) %>%
+	select(-starts_with("PS")) %>%
+	select(-starts_with("PI")) %>%
+	select(-starts_with("PG")) %>%
+	select(-starts_with("PIP")) %>%
+	
+	select(-starts_with("SM")) %>%
+
+	select(-starts_with("TG")) %>%
+	select(-starts_with("TIG"))
+
+}
+
+```
+
+```{r}
+#These are the data sets with bad metabolites removed
+#the mouse intensities are normlized to the total ion counts
+
+Metabolite_Just_Filtered <- lapply (Metabolite_datasets, function(x){remove.bad.metabs(x)} )
+
+
+Normalized_then_Filtered <- lapply (Metabolite_datasets,
+		function(x){ remove.bad.metabs(metab_matrix_TIC_Norm(x,8)[['metab.df']])} )
+					
+# Conversely we can try to predict what happens when we 
+# first remove the bad metaboites and THEN we normalize, 
+# To see what kind of bias we are introducing into the data
+
+Filtered_then_Normalized <- lapply (Metabolite_datasets,
+		function(x){ metab_matrix_TIC_Norm(remove.bad.metabs(x),8)[['metab.df']]} )
+
+```
+
+#Visualize what happens to Strain Aggregates across diets before and after the filter
+
+```{r}
+Plot_Filter_Difference <- function(DataSet,factor_cols){
+	
+	Condition_1.df <- Metabolite_datasets[[DataSet]]
+	Condition_2.df <- Metabolite_Just_Filtered[[DataSet]]
+	Condition_3.df <- Filtered_then_Normalized[[DataSet]]
+	Condition_4.df <- Normalized_then_Filtered[[DataSet]]
+
+	#Create a list with all the conditions you want to plot against eachothe 
+	Conditions_List <- list(Original = Condition_1.df,
+							Just_Filtered = Condition_2.df,
+							Filt_then_Norm = Condition_3.df,
+							Norm_then_Filt = Condition_4.df)
+	
+	# Create a vector of the names of all the items in the conditions list
+	# These will be used as keys to access the different obejects
+	
+	iteration_name_vector <- names(Conditions_List)
+	Conditions_List_Melt <- lapply(iteration_name_vector, function(x) {
+							metab.df <- Conditions_List[[x]]
+							metab.df.melt <- melt(metab.df, id=c( colnames( metab.df[1:factor_cols] )))
+							metab.df.melt$Condition <- x
+							metab.df.melt
+							} )
+	
+	sum_mdata <- do.call("rbind", Conditions_List_Melt)
+	sum_mdata$Meta <- paste(sum_mdata$Diet, sum_mdata$Condition, sep = "_")
+	sum_mdata$Meta <- factor( sum_mdata$Meta,
+		levels = c("CD_Original","CD_Just_Filtered","CD_Filt_then_Norm","CD_Norm_then_Filt",
+					"HF_Original","HF_Just_Filtered","HF_Filt_then_Norm","HF Norm_then_Filt"))
+	sum_mdata <- na.omit(sum_mdata)
+
+	sum_mdata_agg <- sum_mdata %>% group_by(Strain,Meta) %>% 
+						mutate_all(mean) %>% 
+						select(Strain,Meta,value)
+	sum_mdata_agg <- na.omit(sum_mdata_agg)
+	
+	sum_mdata_table <- dcast(sum_mdata_agg, Strain~Meta, mean)
+	
+	CD_Analysis_table <-	sum_mdata_table %>% 
+							select(Strain,dplyr::starts_with("CD")) %>%
+							mutate(AbsDiff = CD_Original - CD_Norm_then_Filt) %>%
+							mutate(FoldChange = CD_Original / CD_Norm_then_Filt) %>%
+							mutate(FoldChange.Log2 = log2(CD_Original / CD_Norm_then_Filt)) 
+   
+	#Returns the Sum data and the Aggregated Sum data by strain
+return(list(sum_mdata,sum_mdata_agg))
+}
+
+```
+
+The function below shows the Boxplots of the Original metabolite Averages comapred to the
+metabolite averages when filtered and then normalized, and conversely
+the metabolites averages when the meatbolites are normalized and then filtered after ward
+```{r}
+#Box plot of Normalized and Filter effects on data
+
+DataConditioning_Comparison_Boxplot_1 <- function(dataset){	
+ggplot(data = Plot_Filter_Difference(dataset,8)[[1]], aes(y=log(value,2), x=Diet, colour=Meta)) + 
+ggtitle(paste("Comparison of the Effect of Normalization and Filtering on",dataset)) +
+geom_boxplot() + facet_wrap(~ Strain)} 
+
+DataConditioning_Comparison_Boxplot_1("Opt_1")
+DataConditioning_Comparison_Boxplot_1("Opt_3")
+DataConditioning_Comparison_Boxplot_1("Science")
+DataConditioning_Comparison_Boxplot_1("FullRun_1")
+DataConditioning_Comparison_Boxplot_1("FullRun_2")
+
+```
+From Visual insepction one can conclude that Normalizatio and Filtering order does
+not produce very large changes on strain wise averages of metabolites
+however simply the act of normalizing moves the strain averages quite a bit
+
+
+```{r}
+
+	ggplot(data = na.omit(sum_mdata_agg), aes(y=log(value,2), x=Meta, colour=Meta)) + 
+		labs(	x = "Diet and Filter Status",
+				y = "Log2 Tranformed Metablite Intensities a.u") +
+		theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+		facet_wrap(~ Strain) + 
+		ggtitle("Comparison of Diet Wise TIC before and after Filtering Bad Metabolites") +
+		geom_boxplot()
+
+```
+
+# Generate Gene Network Inputs
+```{r}
+
+Generate.GeneNetwork.Inputs <- function(name,dataset) {
+
+# Normalize the data and then filter the data metabolites
+metabdata.norm.melt <-  remove.bad.metabs(
+						metab_matrix_TIC_Norm(
+						Metabolite_datasets[[dataset]],8)[['metab.df.melt']])
+
+Diet.agg <- metabdata.norm.melt %>% group_by(Strain, Diet,variable) %>% mutate_all(mean)
+Sex.agg  <- metabdata.norm.melt %>% group_by(Strain, Sex, variable) %>% mutate_all(mean)
+Age.agg <- metabdata.norm.melt %>% group_by(Strain, Age.Cohort, variable) %>% mutate_all(mean)
+Diet.Age.agg <- metabdata.norm.melt %>% group_by(Strain, Diet,Age.Cohort , variable) %>% mutate_all(mean)
+
+GeneNetwork.HF.df <- Diet.agg %>% filter(Diet == "HF") %>% select(Strain,value)
+GeneNetwork.HF <- dcast(GeneNetwork.HF.df, Strain ~ variable, function(x){ mean(log(x)) })
+write.table(GeneNetwork.HF, file = paste(sep="",name,"GeneNetworkInput_HF.txt"), row.names = F, quote = F, sep = "\t")
+
+GeneNetwork.CD.df <- Diet.agg %>% filter(Diet == "CD") %>% select(Strain, value)
+GeneNetwork.CD <- dcast(GeneNetwork.CD.df, Strain ~ variable, function(x) { mean(log(x)) })
+write.table(GeneNetwork.CD, file = paste(sep="",name,"GeneNetworkInput_CD.txt"), row.names = F, quote = F, sep = "\t")
+
+GeneNetwork.Young.df <- Age.agg %>% filter(Age.Cohort %in% c(1,2)) %>% select(Strain, value)
+GeneNetwork.Young <- dcast(GeneNetwork.Young.df, Strain ~ variable, function(x){ mean(log(x)) })
+write.table(GeneNetwork.Young, file = paste(sep="",name,"GeneNetworkInput_Young.txt"), row.names = F, quote = F, sep = "\t")
+
+GeneNetwork.Old.df <- Age.agg %>% filter(Age.Cohort %in% c(3, 4)) %>% select(Strain, value)
+GeneNetwork.Old <- dcast(GeneNetwork.Old.df, Strain ~ variable, function(x){ mean(log(x)) })
+write.table(GeneNetwork.Old, file = paste(sep="",name,"GeneNetworkInput_Old.txt"), row.names = F, quote = F, sep = "\t")
+
+GeneNetwork.HF.Old.df <- Diet.Age.agg %>% filter(Diet == "HF") %>% filter(Age.Cohort %in% c(3, 4)) %>%
+	select(Strain, value)
+GeneNetwork.HF.Old <- dcast(GeneNetwork.HF.Old.df, Strain ~ variable, function(x) { mean(log(x)) })
+write.table(GeneNetwork.HF.Old, file = paste(sep="",name,"GeneNetworkInput_HF_Old.txt"), row.names = F, quote = F, sep = "\t")
+
+GeneNetwork.CD.Old.df <- Diet.Age.agg %>% filter(Diet == "CD") %>% filter(Age.Cohort %in% c(3, 4)) %>%
+	select(Strain, value)
+GeneNetwork.CD.Old <- dcast(GeneNetwork.CD.Old.df, Strain ~ variable, function(x) { mean(log(x)) })
+write.table(GeneNetwork.CD.Old, file = paste(sep="",name,"GeneNetworkInput_CD_Old.txt"), row.names = F, quote = F, sep = "\t")
+
+GeneNetwork.HF.Young.df <- Diet.Age.agg %>% filter(Age.Cohort %in% c(1, 2)) %>%
+	filter(Age.Cohort %in% c(1, 2)) %>%
+	select(Strain, value)
+GeneNetwork.HF.Young <- dcast(GeneNetwork.HF.Young.df, Strain ~ variable, function(x) { mean(log(x)) })
+write.table(GeneNetwork.HF.Young, file = paste(sep="",name,"GeneNetworkInput_HF_Young.txt"), row.names = F, quote = F, sep = "\t")
+
+GeneNetwork.CD.Young.df <- Diet.Age.agg %>% filter(Age.Cohort %in% c(1, 2)) %>%
+    filter(Age.Cohort %in% c(1, 2)) %>%
+	select(Strain, value)
+GeneNetwork.CD.Young <- dcast(GeneNetwork.CD.Young.df, Strain ~ variable, function(x) { mean(log(x)) })
+write.table(GeneNetwork.CD.Young, file = paste(sep="",name,"GeneNetworkInput_CD_Young.txt"), row.names = F, quote = F, sep = "\t")
+
+}
+
+Generate.GeneNetwork.Inputs("FullRun_1","FullRun_1")
+Generate.GeneNetwork.Inputs("FullRun_2","FullRun_2")
+
+```
+
+# Generate MetaboAnalyst Input
+```{r}
+
+Generate.MetaboAnalyst.Inputs <- function(dataset){
+	# Normalize the data and then filter the data metabolites
+	metabdata.norm  <-  remove.bad.metabs(
+						metab_matrix_TIC_Norm(
+						Metabolite_datasets_HMDB[[dataset]],8)[['metab.df.melt']])
+
+	metabdata.Strain <-   metabdata.norm %>%
+ 						  select(Strain,ET,variable,value) %>%
+						  dcast(ET + Strain  ~ variable)
+	write.csv(metabdata.Strain,file = paste(sep="_",dataset,"MetabAnalystInput_Strain.csv"),row.names = F, quote = F)
+
+	metabdata.Diet <-   metabdata.norm %>%
+ 						  select(Diet,ET,variable,value) %>%
+						  dcast(ET + Diet  ~ variable)
+	write.csv(metabdata.Strain,file = paste(sep="_",dataset,"MetabAnalystInput_Diet.csv"),row.names = F, quote = F)
+
+	metabdata.Age.Cohort <-   metabdata.norm %>%
+ 						  select(Age.Cohort,ET,variable,value) %>%
+						  dcast(ET + Age.Cohort  ~ variable)
+	write.csv(metabdata.Strain,file = paste(sep="_",dataset,"MetabAnalystInput_Age.Cohort.csv"),row.names = F, quote = F)
+
+	metabdata.Age <-   metabdata.norm %>%
+ 						  select(Age,ET,variable,value) %>%
+						  dcast(ET + Age  ~ variable)
+	write.csv(metabdata.Strain,file = paste(sep="_",dataset,"MetabAnalystInput_Age.csv"),row.names = F, quote = F)
+
+	metabdata.Sex <-   metabdata.norm %>%
+ 						  select(Sex,ET,variable,value) %>%
+						  dcast(ET + Sex  ~ variable)
+	write.csv(metabdata.Strain,file = paste(sep="_",dataset,"MetabAnalystInput_Sex.csv"),row.names = F, quote = F)}
+
+Generate.MetaboAnalyst.Inputs("FullRun_1")
+Generate.MetaboAnalyst.Inputs("FullRun_2")
+
+```
+
+
+# Generate RQTL Input
+```{r}
+#' Source the R code from an knitr file, optionally skipping plots
+#' @param file the knitr file to source
+#' @param skip_plots whether to make plots. If TRUE (default) sets a null graphics device
+#' @return This function is called for its side effects
+#' @export
+
+source_rmd = function(file, skip_plots = TRUE) {
+  temp = tempfile(fileext=".R")
+  knitr::purl(file, output=temp)
+
+  if(skip_plots) {
+    old_dev = getOption('device')
+    options(device = function(...) {
+      .Call("R_GD_nullDevice", PACKAGE = "grDevices")
+    })
   }
-  
-  res <- nullToNA(res)
-  
-  x1 <- names(res)
-  x2 <- as.character(unlist(res[1:length(res)]))
-  
-  HMDB.Dict <- cbind.data.frame(x1,x2)
-  row.names(HMDB.Dict) <- NULL
-  colnames(HMDB.Dict) <- c("HMDB.Id","Metabolite.Name")
-  return(HMDB.Dict)
-}
-
-```
-
-```{r HMDB Id Conver}
-convert.ids <- function(data, nfactorcols){
-  
-  match.df <- HMDB_Lookup(data, nfactorcols)
-  list.match <- match(colnames(data),match.df$HMDB.Id)
-                
-  
-  no.match <- which(is.na(list.match))
-  list.match.fin <- list.match[!is.na(list.match)]
-  
-  colnames(data)[-no.match] <- as.character(match.df[list.match.fin,2])
-  
-  colnames(data) <- gsub('-','_',colnames(data))
-  colnames(data) <- gsub(' ','.',colnames(data))
-  
-  return(data)
-
-}
+  source(temp)
+  if(skip_plots) {
+    options(device = old_dev)
+}}
 ```
 
 
@@ -388,7 +736,8 @@ pairWiseCor <- function(metab_data_1,metab_data_2){
 
 #Overlap between the Science and the Full Run metabolites
 ```{r}
-overlap_metabs <- Overlapping_Subsets(metab_data0,metab_data4)
+overlap_metabs <- Overlapping_Subsets(metabolite_data, metab_data4)
+
 Science_FullRun <- pairWiseCor(overlap_metabs$X1,overlap_metabs$X2)
 
 Science_FullRun_plot <- melt(Science_FullRun)
@@ -568,64 +917,6 @@ y2.100 <- Corr_Bootstrap_Master_Function(metab_data0,
 ```
 
 
-#Parallelize the Code
-
-
-```{r}
-library(foreach)
-library(doParallel)
-library(parallel)
-
-numCores <- detectCores()
-cl <- makeCluster(numCores)
-registerDoParallel(cl)
-
-inputs <- 1:10
-processInput <- function(i) {
-  i * i
-}
-
-results <- foreach(i=inputs) %dopar% {
-  processInput(i)
-}
-```
-
-#Basic Parallelization Check
-```{r}
-bench.par <- microbenchmark::microbenchmark(
-results <- foreach(i=nboot) %dopar% {
-  i * 10
-} 
-,times = 1000)
-
-bench.sin <- microbenchmark::microbenchmark(
-results <- for(i in 1:nboot) {
-  i * 10
-}
-,times = 1000)
-
-bench.df <- cbind(bench.par,bench.sin[-1])
-colnames(bench.df) <- c("Objective","Parrallel","Serial")
-bench.df[1] <- 1:nrow(bench.df)
-m.bench.df <- melt(bench.df,id.vars = "Objective")
-m.bench.df$value <- m.bench.df$value/1E6
-
-ggplot(data = m.bench.df, aes(x = m.bench.df$variable,
-                              y = m.bench.df$value )) + 
-        geom_point(inherit.aes = FALSE, 
-                   aes(colour = m.bench.df$value,
-                       x = m.bench.df$variable,
-                       y = m.bench.df$value,
-                       alpha = 0.5),
-                   position = position_jitter(width = 0.5)) + 
-  scale_colour_gradient2() +
-        geom_boxplot(outlier.colour = NA, fill = NA, width = 0.5) + 
-  scale_y_continuous(name = "Processor Runtime (seconds)",limits = c(0,60)) + 
-  theme_light() 
-
-
-```
-
 
 
 ```{r}
@@ -741,11 +1032,8 @@ plotting_res4.df(FDR.df)
 
 
 
-
 ```{r}
-
 # Histogram overlaid with kernel density curve
-
 
 coeff.filt <- function(x,i){
   coeffs <- as.character(unique(x$variable))
@@ -836,25 +1124,29 @@ scale_color_manual(name = "Correlation Coefficients",
 
 #Multi AOV Script
 ```{r}
-AOV_Script <- function(metab_data,metab){
+
+AOV_Script <- function(metab_data){
   
   #Set up variables for the aov analysis
-  counts <- as.matrix(log(metab_data[metab]))
+  counts <- as.matrix(log(metab_data))
   colnames(counts) <- "counts"
-  factor.columns <- metab_data[1:11]
-  metabmatrix <- cbind.data.frame(factor.columns,counts)
+
+#  factor.columns <- metab_data[1:factor_cols]
+#  metabmatrix <- cbind.data.frame(factor.columns,counts)
+    
+  fit2 <- aov(formula = as.formula("counts ~ Diet + Sex + Age.Cohort + Strain"), 
+              data = metab_data5.names)
   
-  fit <- aov(formula = as.formula("counts ~ Diet + Replicate + Sex + Age.Cohort + Strain"), 
-             data = metab_data)
-  
-  fit2 <- glm(formula = as.formula("counts ~ Diet + Replicate + Sex + Age.Cohort + Strain"), 
-              data = metab_data)
-  
-  return(fit)
+  return((summary(fit2)))
 }
 
+Multi_GLM <- lapply(metab_data5.names[9:ncol(metab_data5.names)], AOV_Script)
 
-fit_summ <- AOV_Script(metab_data4,13)
+AOV_Coeffs <- sapply(Multi_GLM, function(x){ -log (as.numeric( x[[1]][[5]][1:4] ) ) }) 
+AOV_Coeffs <- cbind.data.frame(c("Diet","Sex","Age.Cohort","Strain"),AOV_Coeffs)
+colnames(AOV_Coeffs)[1] <- "AOV_Coeff"
+
+AOV_Coeffs <- melt(AOV_Coeffs)
 
 ```
 
@@ -966,48 +1258,10 @@ summary(fit3)
 
 ```
 
-```{r}
-library(ggfortify)
-autoplot(lm(Petal.Width ~ ., data = metab4.data), label.size = 3)
-```
-
 
 
 #Exploratory Comparisions
 
-Generate Data for Basic Set comparisons of Metabolites
-```{r}
-metab_data0.names <- convert.ids(metab_data0,10)
-metab_data1.names <- convert.ids(metab_data1,10)
-metab_data3.names <- convert.ids(metab_data3,10)
-metab_data4.names <- convert.ids(metab_data4,11)
-
-#strain.sample <- as.character(sample(unique(metab_data0$Strain),size = 10,replace = FALSE))
-
-remove.bad.metabs <- function(data) {
-data <- data %>% setNames(make.names(names(.), unique = TRUE)) %>% 
-  select(- contains('Missing.from.HMDB')) %>% 
-  filter(Diet %in% c("HF","CD")) %>%
-  select(-contains('PS.')) %>%
-  select(-contains('PC.')) %>%
-  select(-contains('PG.')) %>%
-  select(-contains('PE.')) %>%
-  select(-contains('DG.')) %>%
-  select(-contains('CE.')) %>%
-  select(-contains('PI.')) %>%
-  select(-contains('TG.'))
-}
-
-metab_data0.names <- remove.bad.metabs(metab_data0.names)
-metab_data1.names <- remove.bad.metabs(metab_data1.names)
-metab_data3.names <- remove.bad.metabs(metab_data3.names)
-metab_data4.names <- remove.bad.metabs(metab_data4.names)
-
-metab_data0.hmdb <- remove.bad.metabs(metab_data0.names)
-metab_data1.hmdb <- remove.bad.metabs(metab_data1.names)
-metab_data3.hmdb <- remove.bad.metabs(metab_data3.names)
-metab_data4.hmdb <- remove.bad.metabs(metab_data4.names)
-```
 
 #Upset Analysis
 Which Metabolites are found in Science paper but not in the Current Study
@@ -1019,7 +1273,7 @@ DietFoldChange <- function(data,nfactorcols) {
 
   #nfactorcols <- 10
   #data <- metab_data0.names
-  
+ 
 
 data.CD <- data %>% filter(Diet == "CD")
 data.CD.mean <- colMeans(data.CD[(nfactorcols + 1) :ncol(data.CD)])
@@ -1056,17 +1310,17 @@ return(Diet.DF)
 
 Generate data from the Diet fold function and plot
 ```{r}
-    Diet.DF.0 <- DietFoldChange(metab_data0.names, 9)
-    Diet.DF.1 <- DietFoldChange(metab_data1.names, 9)
-    Diet.DF.3 <- DietFoldChange(metab_data3.names, 11)
-    Diet.DF.4 <- DietFoldChange(metab_data4.names, 11)
-
-
+    Diet.DF.0 <- DietFoldChange(metab_data0.names, 10)
+    Diet.DF.1 <- DietFoldChange(metab_data1.names, 10)
+    Diet.DF.3 <- DietFoldChange(metab_data3.names, 10)
+    Diet.DF.4 <- DietFoldChange(metab_data4.names, 13)
+    Diet.DF.5 <- DietFoldChange(metab_data5.names, 12)
+	
     plot(Diet.DF.0$HF.mean, Diet.DF.0$CD.mean, log = "xy")
 
     model.Diet = lm(data = Diet.DF.0, formula = HF.mean ~ CD.mean)
     summary(model.Diet)
-    plot(model.Diet)
+#    plot(model.Diet)
 ```
 
 
@@ -1076,8 +1330,8 @@ Generate data from the Diet fold function and plot
 
 AgeFoldChange <- function(data,nfactorcols) {
 
-  nfactorcols <- 11
-  data <- metab_data4.names
+  #nfactorcols <- 12
+  #data <- metab_data5.names
 
     data$Age <- as.numeric(data$Age)
 	
@@ -1110,9 +1364,15 @@ Age.DF[is.na(Age.DF)] <- 0
                        mutate(T.Test = pchisq(abs(T.Stat), 1, lower.tail = FALSE)) %>%
                        mutate(Bonferroni.P = T.Test * n.Young.samples) %>%
                        arrange(FoldChange.Log2)
+    
+    #Age.res <- lapply(Age.DF, function(x) x[is.infinite(x)])
 
-	Age.DF[!is.finite(Age.DF)] <- 0
-	Age.Min <- min(Age.DF$FoldChange)
+	#metabolites_list_names <- as.data.frame( Age.DF$Metabolite)
+    #Age.res$Metabolite <- metabolites_list_names
+
+	#Age.DF.final <- do.call(cbind.data.frame, Age.res)
+
+    Age.Min <- min(Age.DF$FoldChange)
     Age.Max <- max(Age.DF$FoldChange)
 
     Age.DF$Norm.FoldChange <- (Age.DF$FoldChange - Age.Min) / (Age.Max - Age.Min)
@@ -1123,21 +1383,13 @@ return(Age.DF)
 
 }
 
-```
-
 # Generate Age Related Metabolite Diet
-```{r]
 
-    Age.DF.0 <- AgeFoldChange(metab_data0.names, 9)
-    Age.DF.1 <- AgeFoldChange(metab_data1.names, 9)
+    Age.DF.0 <- AgeFoldChange(metab_data0.names, 10)
+    Age.DF.1 <- AgeFoldChange(metab_data1.names, 10)
     Age.DF.3 <- AgeFoldChange(metab_data3.names, 11)
-    Age.DF.4 <- AgeFoldChange(metab_data4.names, 11)
-
-	plot(Age.DF.0$Young.mean, Age.DF.0$Old.mean, log = "xy")
-
-    model.Diet = lm(data = Age.DF.0, formula = Age.DF.0$Old.mean ~ Age.DF.0$Young.mean)
-    summary(model.Diet)
-    plot(model.Diet,1)
+    Age.DF.4 <- AgeFoldChange(metab_data4.names, 13)
+    Age.DF.5 <- AgeFoldChange(metab_data5.names, 12)
 
 ```
 
@@ -1163,19 +1415,28 @@ Hit.Filter <- function(data, critical.value) {
 
 ```{r]
 
+library(UpSetR)
 Metabolite_Venn_Data <- list(Science_Paper = (Diet.DF.0$Metabolite),
                              Opt_Run_1 = (Diet.DF.1$Metabolite),
                              Opt_Run_3 = (Diet.DF.3$Metabolite),
-                             Full_Run_1 = (Diet.DF.4$Metabolite))
+                             Full_Run_1 = (Diet.DF.4$Metabolite),
+                             Full_Run_2 = (Diet.DF.5$Metabolite))
+
+Metabolite_Venn_Data_Full_Runs <- list(Science_Paper = (Diet.DF.0$Metabolite),
+                             Full_Run_1 = (Diet.DF.4$Metabolite),
+                             Full_Run_2 = (Diet.DF.5$Metabolite))
 
 Metabolite_Hits_Venn_Data <- list(Science_Paper = Hit.Filter(Diet.DF.0,2) ,
                              Opt_Run_1 = Hit.Filter(Diet.DF.1,2) ,
-                             Opt_Run_3 = Hit.Filter(Diet.DF.3,2) ,
-                             Full_Run_1 = Hit.Filter(Diet.DF.4,2) )
+                             #Opt_Run_3 = Hit.Filter(Diet.DF.3,2) ,
+                             Full_Run_1 = Hit.Filter(Diet.DF.4, 2),
+                             Full_Run_2 = (Diet.DF.5$Metabolite)
+							 )
 
 
 upset(fromList(Metabolite_Venn_Data))
 upset(fromList(Metabolite_Hits_Venn_Data))
+upset(fromList(Metabolite_Venn_Data_Full_Runs))
 
 upset(fromList(Metabolite_Venn_Data), 
       queries = list(list(query = intersects, 
@@ -1208,30 +1469,55 @@ volcano.plot <- function(data,critical.value){
   ggplot(data = data, 
   aes(x = FoldChange.Log2, y = -log(T.Test), color = -log(T.Test) > critical.value)) + geom_point() +
     scale_y_continuous() + scale_x_continuous() +
-    geom_vline(xintercept = 0) + geom_hline(yintercept = 0) +
+	geom_vline(xintercept = 0) + geom_hline(yintercept = 0) +
     ggrepel::geom_label_repel(aes(label = ifelse(-log(T.Test) > critical.value, as.character(Metabolite), ''),
-  fontface = 'bold', color = 'white')) + theme_minimal(base_size = 16)
+    fontface = 'bold', color = 'white')) +
+	theme_minimal(base_size = 16)
 }
+
+volcano.plot2 <- function(data, critical.value) {
+        ggplot(data = data,
+        aes(x = FoldChange.Log2, y = -log(T.Test), color = -log(T.Test) > critical.value)) +
+		geom_point() +
+        scale_y_continuous() + scale_x_continuous() +
+        geom_vline(xintercept = 0) + geom_hline(yintercept = 0) +
+        theme_minimal(base_size = 16)
+    }
 
 
 ```
 
 #MAke Diet Volcano Plots
 ```{r}
-volcano.plot(Diet.DF.0,3)
-volcano.plot(Diet.DF.1,3)
-volcano.plot(Diet.DF.3,3)
-volcano.plot(Diet.DF.4,3)
+pdf(file = "volcano_diet.pdf", width = 10, height = 7.5)
+#volcano.plot(Diet.DF.0,3)
+#volcano.plot(Diet.DF.1,3)
+#volcano.plot(Diet.DF.3,3)
+#volcano.plot(Diet.DF.4,3)
+volcano.plot(Diet.DF.5, 3)
+dev.off()
+
+pdf(file = "volcano_diet_nolab.pdf", width = 10, height = 7.5)
+volcano.plot2(Diet.DF.5, 3)
+dev.off()
+
 ```
 
 
 # Make Age Volcano Plots
 ```{r}
-volcano.plot(Age.DF.0,20)						
-volcano.plot(Age.DF.1,4)
-volcano.plot(Diet.DF.3,4)
-volcano.plot(Diet.DF.4,4)
+pdf(file = "volcano_age.pdf",width=10,height=7.5)
+#volcano.plot(Age.DF.0,20)						
+#volcano.plot(Age.DF.1,4)
+#volcano.plot(Age.DF.3,4)
+#volcano.plot(Age.DF.4, 3)
+volcano.plot(Age.DF.5, 3)
 
+dev.off()
+
+pdf(file = "volcano_age_nolab.pdf", width = 10, height = 7.5)
+volcano.plot2(Age.DF.5, 3)
+dev.off()
 ```
 
 
@@ -1241,10 +1527,9 @@ volcano.plot(Diet.DF.4,4)
 Generate Data for PCA analysis
 ```{r}
 
-metab4.data <- metab_data4.names
+metab4.data <- metab_data5.names
 
-PCA_dataset <-data.matrix(metab4.data[12:ncol(metab4.data)]);
-PCA_dataset.log <-log(data.matrix(metab4.data[12:ncol(metab4.data)]));
+PCA_dataset <- log(data.matrix(metab4.data[14:ncol(metab4.data)]))
 
 library(ggfortify)
 
@@ -1253,12 +1538,40 @@ autoplot(kmeans(PCA_dataset, 2), data = metab4.data, label = TRUE, label.size = 
 
 library(cluster)
 
+
 autoplot(pam(PCA_dataset, 2), frame = TRUE, frame.type = 'norm')
+autoplot(prcomp(PCA_dataset, scale = T), frame = TRUE, frame.type = 'norm',
+                     loadings = TRUE, loadings.colour = 'blue',
+                     loadings.label = TRUE, loadings.label.size = 3)
+
 autoplot(fanny(PCA_dataset, 2), frame = TRUE)
 
 autoplot(pam(PCA_dataset.log, 2), frame = TRUE, frame.type = 'norm')
 autoplot(fanny(PCA_dataset.log, 2), frame = TRUE)
 
+
+    library(reshape2)
+    library(ggplot2)
+
+    pca <- prcomp(PCA_dataset, scale = T)
+    pca_dim_data <- cbind.data.frame(names(pca$rotation[, 1]), (pca$rotation[, 1:9]))
+    pca_dim_data <- pca_dim_data[1:40,]
+
+    melted <- melt(pca_dim_data)
+	colnames(melted) <- c("metab","PC","value")
+
+    barplot <- ggplot(data = melted) +
+    geom_bar(aes(x = metab, y = value, fill = metab), stat = "identity") +
+    facet_wrap(~PC)
+    barplot + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+    scores <- data.frame(sample.groups, pca$x[, 1:3])
+    pc1.2 <- qplot(x = PC1, y = PC2, data = scores, colour = factor(sample.groups)) +
+    theme(legend.position = "none")
+    pc1.3 <- qplot(x = PC1, y = PC3, data = scores, colour = factor(sample.groups)) +
+    theme(legend.position = "none")
+    pc2.3 <- qplot(x = PC2, y = PC3, data = scores, colour = factor(sample.groups)) +
+    theme(legend.position = "none")
 
 library(lfda)
 
@@ -1269,7 +1582,6 @@ autoplot(model, data = metab4.data, frame = TRUE, frame.colour = 'Sex')
 autoplot(model, data = metab4.data, frame = TRUE, frame.colour = 'Strain')
 autoplot(model, data = metab4.data, frame = TRUE, frame.colour = 'Age.Cohort')
 autoplot(model, data = metab4.data, frame = TRUE, frame.colour = 'Replicate')
-
 
 
 # Kernel Local Fisher Discriminant Analysis (KLFDA)
@@ -1303,17 +1615,17 @@ http://rpubs.com/sinhrks/plot_pca
 
 ```{r}
     
-  PCA_res <- prcomp(PCA_dataset,scale. = TRUE)
-  
+PCA_res <- prcomp(PCA_dataset,scale. = TRUE)
+PCA_dataset.no.out <- lapply(PCA_dataset, function(x) {x[!x %in% boxplot.stats(x)$out]})
 #pdf(file = "PCA_Plots.pdf", width = 16,height = 9)
-  autoplot(prcomp(PCA_dataset), data = data, colour = 'Strain')
-  autoplot(prcomp(PCA_dataset), data = data, colour = 'ET') + 
+    autoplot(prcomp(PCA_dataset, scale =T ), data = metab4.data, colour = 'Strain')
+    autoplot(prcomp(PCA_dataset, scale = T), data = metab4.data, colour = 'ET') +
          theme(legend.position="none")
-  autoplot(prcomp(PCA_dataset), data = data, colour = 'replicate')
-  autoplot(prcomp(PCA_dataset), data = data, colour = 'Sex')
-  autoplot(prcomp(PCA_dataset), data = data, colour = 'Diet')
-  autoplot(prcomp(PCA_dataset), data = data, colour = 'Age.Cohort')
-  autoplot(prcomp(PCA_dataset), data = data, colour = 'Extraction')
+    autoplot(prcomp(PCA_dataset, scale = T), data = metab4.data colour = 'replicate')
+    autoplot(prcomp(PCA_dataset, scale = T), data = metab4.data, colour = 'Sex')
+    autoplot(prcomp(PCA_dataset, scale = T), data = metab4.data, colour = 'Diet')
+    autoplot(prcomp(PCA_dataset, scale = T), data = metab4.data, colour = 'Age.Cohort')
+    autoplot(prcomp(PCA_dataset, scale = T), data = metab4.data, colour = 'Extraction')
 
 #Passing loadings = TRUE draws eigenvectors.
   autoplot(prcomp(PCA_dataset), 
@@ -1327,13 +1639,34 @@ http://rpubs.com/sinhrks/plot_pca
 ```
 
 
+```{r}
+    ## calling TSNE
+    library(Rtsne)
+    ## Curating the database for analysis with both t-SNE and PCA
+
+	Labels <- train$label
+    train$label <- as.factor(train$label)
+    ## for plotting
+    colors = rainbow(length(unique(train$label)))
+    names(colors) = unique(train$label)
+
+    ## Executing the algorithm on curated data
+    tsne <- Rtsne(train[, -1], dims = 2, perplexity = 30, verbose = TRUE, max_iter = 500)
+    
+
+    ## Plotting
+    plot(tsne$Y, t = 'n', main = "tsne")
+    text(tsne$Y, labels = train$label, col = colors[train$label])
+
+```
+
 
 ```{r}
 # Pricipal Components Analysis
 # entering raw data and extracting PCs 
 # from the correlation matrix 
 
-fit <- princomp(PCA_dataset, cor=TRUE)
+fit <- princomp(PCA_dataset, cor = TRUE, scale=TRUE)
 summary(fit) # print variance accounted for 
 loadings(fit) # pc loadings 
 plot(fit, type="bar") # scree plot 
@@ -1399,7 +1732,7 @@ as well as the inclusion of supplimentary variables and observations.
 # PCA Variable Factor Map 
 library(FactoMineR)
 # graphs generated automatically
-result <- PCA(PCA_dataset, graph = TRUE,scale.unit = TRUE)
+result <- PCA(PCA_dataset, graph = TRUE, scale.unit = TRUE)
 
 result <- PCA(PCA_dataset, 
               graph = TRUE,
@@ -1588,7 +1921,6 @@ groups <- cutree(fit, k=5) # cut tree into 5 clusters
 # draw dendogram with red borders around the 5 clusters 
 rect.hclust(fit, k=5, border="red")
 ```
-
 
 The pvclust( ) function in the pvclust package provides p-values for hierarchical clustering based on multiscale bootstrap resampling. Clusters that are highly supported by the data will have large p values. 
 Pvclust clusters columns, not rows. Data needs to be tarnsposed before using
